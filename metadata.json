@@ -1,0 +1,8 @@
+{
+  "name": "ASKIA-SI GADIS - Gudang Aplikasi Digital Sekolah",
+  "description": "Informasi Gudang Aplikasi Digital Sekolah (ASKIA-SI GADIS) - Wadah digital untuk menghimpun, mendokumentasikan, mengelola, mempublikasikan, dan berbagi inovasi aplikasi digital sekolah dampingan pengawas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
