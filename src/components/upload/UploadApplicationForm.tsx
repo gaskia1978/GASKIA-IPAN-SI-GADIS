@@ -51,7 +51,7 @@ export const UploadApplicationForm: React.FC<UploadApplicationFormProps> = ({
     currentUser?.school_name || existingSchools[0]?.school_name || ''
   );
   const [npsn, setNpsn] = useState(
-    existingSchools.find(s => s.id === schoolId)?.npsn || '20521401'
+    existingSchools.find(s => s.id === schoolId)?.npsn || ''
   );
   const [district, setDistrict] = useState(
     existingSchools.find(s => s.id === schoolId)?.district || 'Lumajang'

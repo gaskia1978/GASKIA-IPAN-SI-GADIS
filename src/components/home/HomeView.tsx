@@ -203,17 +203,25 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {featuredSchools.map((school) => (
-              <SchoolCard
-                key={school.id}
-                school={school}
-                totalApps={appCounts[school.id]?.total || 0}
-                approvedApps={appCounts[school.id]?.approved || 0}
-                onSelectSchool={onOpenSchoolDetail}
-              />
-            ))}
-          </div>
+          {featuredSchools.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+              <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-sm font-semibold text-slate-700">Belum Ada Sekolah Pengembang Terdaftar</p>
+              <p className="text-xs text-slate-500 mt-1">Sekolah akan tampil otomatis di sini setelah mendaftarkan inovasi digital pertamanya.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {featuredSchools.map((school) => (
+                <SchoolCard
+                  key={school.id}
+                  school={school}
+                  totalApps={appCounts[school.id]?.total || 0}
+                  approvedApps={appCounts[school.id]?.approved || 0}
+                  onSelectSchool={onOpenSchoolDetail}
+                />
+              ))}
+            </div>
+          )}
         </section>
 
       </div>

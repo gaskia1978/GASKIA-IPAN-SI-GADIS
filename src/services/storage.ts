@@ -64,11 +64,23 @@ const LEGACY_DEMO_APP_IDS = new Set<string>([
   'ASKIA-2026-005', 'ASKIA-2026-006', 'ASKIA-2026-007', 'ASKIA-2026-008',
 ]);
 
+// Daftar ID sekolah demo bawaan yang telah dihapus permanen dari platform
+const LEGACY_DEMO_SCHOOL_IDS = new Set<string>([
+  'school-1', 'school-2', 'school-3', 'school-4', 'school-5', 'school-6',
+]);
+
 function isDemoApplicationRecord(app: Application): boolean {
   if (!app) return false;
   if (app.is_demo === true) return true;
   if (app.id && LEGACY_DEMO_APP_IDS.has(app.id)) return true;
   if (app.registration_code && LEGACY_DEMO_APP_IDS.has(app.registration_code)) return true;
+  return false;
+}
+
+function isDemoSchoolRecord(school: School): boolean {
+  if (!school) return false;
+  if (school.is_demo === true) return true;
+  if (school.id && LEGACY_DEMO_SCHOOL_IDS.has(school.id)) return true;
   return false;
 }
 
@@ -102,11 +114,42 @@ export const StorageService = {
     }
   },
 
+  // Tombstone List untuk Sekolah yang dihapus permanen
+  getDeletedSchoolIds(): string[] {
+    return getLocalItem<string[]>(STORAGE_KEYS.DELETED_SCHOOLS, []);
+  },
+
+  addDeletedSchoolId(id: string): void {
+    const list = this.getDeletedSchoolIds();
+    if (id && !list.includes(id)) {
+      list.push(id);
+      setLocalItem(STORAGE_KEYS.DELETED_SCHOOLS, list);
+    }
+  },
+
+  removeDeletedSchoolId(id: string): void {
+    const list = this.getDeletedSchoolIds();
+    const filtered = list.filter(item => item !== id);
+    if (filtered.length !== list.length) {
+      setLocalItem(STORAGE_KEYS.DELETED_SCHOOLS, filtered);
+    }
+  },
+
   // Inisialisasi data awal jika belum ada
   init(): void {
     if (!localStorage.getItem(STORAGE_KEYS.SCHOOLS)) {
-      setLocalItem(STORAGE_KEYS.SCHOOLS, INITIAL_SCHOOLS);
+      setLocalItem(STORAGE_KEYS.SCHOOLS, []);
+    } else {
+      // Otomatis bersihkan sekolah berstatus demo yang mungkin masih tersimpan di cache peramban
+      try {
+        const currentSchools = getLocalItem<School[]>(STORAGE_KEYS.SCHOOLS, []);
+        const cleanedSchools = currentSchools.filter(s => !isDemoSchoolRecord(s));
+        if (cleanedSchools.length !== currentSchools.length) {
+          setLocalItem(STORAGE_KEYS.SCHOOLS, cleanedSchools);
+        }
+      } catch {}
     }
+
     if (!localStorage.getItem(STORAGE_KEYS.APPLICATIONS)) {
       setLocalItem(STORAGE_KEYS.APPLICATIONS, []);
     } else {
@@ -155,19 +198,22 @@ export const StorageService = {
   async syncWithServer(): Promise<boolean> {
     try {
       const deletedIds = this.getDeletedAppIds();
+      const deletedSchoolIds = this.getDeletedSchoolIds();
       const localApps = this.getApplications();
       const localSchools = this.getSchools();
       
-      // Jangan pernah kirim aplikasi demo maupun aplikasi yang sudah dihapus permanen
+      // Jangan pernah kirim aplikasi demo/sekolah demo maupun data yang sudah dihapus permanen
       const customApps = localApps.filter(
         a => !isDemoApplicationRecord(a) && !deletedIds.includes(a.id) && (!a.registration_code || !deletedIds.includes(a.registration_code))
       );
-      const customSchools = localSchools.filter(s => !s.is_demo);
+      const customSchools = localSchools.filter(
+        s => !isDemoSchoolRecord(s) && !deletedSchoolIds.includes(s.id)
+      );
       const localFeedbacks = this.getFeedbacks();
       const localReports = this.getReports();
 
-      // 1. Beritahu server tentang inovasi baru, ulasan pengguna, laporan, dan blacklist ID terhapus
-      if (customApps.length > 0 || customSchools.length > 0 || localFeedbacks.length > 0 || localReports.length > 0 || deletedIds.length > 0) {
+      // 1. Beritahu server tentang inovasi baru, sekolah baru, ulasan pengguna, laporan, dan blacklist ID terhapus
+      if (customApps.length > 0 || customSchools.length > 0 || localFeedbacks.length > 0 || localReports.length > 0 || deletedIds.length > 0 || deletedSchoolIds.length > 0) {
         await fetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -177,6 +223,7 @@ export const StorageService = {
             feedbacks: localFeedbacks,
             reports: localReports,
             deleted_application_ids: deletedIds,
+            deleted_school_ids: deletedSchoolIds,
           }),
         }).catch(err => console.warn('Sync push to server warn:', err));
       }
@@ -192,8 +239,14 @@ export const StorageService = {
             this.addDeletedAppId(sDelId);
           }
         }
+        if (Array.isArray(data.deleted_school_ids)) {
+          for (const sDelSchId of data.deleted_school_ids) {
+            this.addDeletedSchoolId(sDelSchId);
+          }
+        }
 
         const latestDelSet = new Set(this.getDeletedAppIds());
+        const latestDelSchoolSet = new Set(this.getDeletedSchoolIds());
 
         // Update applications: Server sentral adalah Single Source of Truth (tanpa aplikasi demo)
         if (Array.isArray(data.applications)) {
@@ -207,9 +260,14 @@ export const StorageService = {
           setLocalItem(STORAGE_KEYS.APPLICATIONS, validServerApps);
         }
 
-        // Update schools
+        // Update schools: Server sentral adalah Single Source of Truth (tanpa sekolah demo)
         if (Array.isArray(data.schools)) {
-          setLocalItem(STORAGE_KEYS.SCHOOLS, data.schools);
+          const validServerSchools: School[] = data.schools.filter(
+            (s: School) =>
+              !isDemoSchoolRecord(s) &&
+              !latestDelSchoolSet.has(s.id)
+          );
+          setLocalItem(STORAGE_KEYS.SCHOOLS, validServerSchools);
         }
 
         if (Array.isArray(data.categories)) {
@@ -262,6 +320,7 @@ export const StorageService = {
     const currentReports = this.getReports();
     const currentFeedbacks = this.getFeedbacks();
     const deletedIds = this.getDeletedAppIds();
+    const deletedSchoolIds = this.getDeletedSchoolIds();
 
     // 1. Kunci di penyimpanan lokal peramban
     setLocalItem(STORAGE_KEYS.APPLICATIONS, currentApps);
@@ -286,6 +345,7 @@ export const StorageService = {
           reports: currentReports,
           feedbacks: currentFeedbacks,
           deleted_application_ids: deletedIds,
+          deleted_school_ids: deletedSchoolIds,
         }),
       });
 
@@ -294,6 +354,11 @@ export const StorageService = {
         if (Array.isArray(data.deleted_application_ids)) {
           for (const dId of data.deleted_application_ids) {
             this.addDeletedAppId(dId);
+          }
+        }
+        if (Array.isArray(data.deleted_school_ids)) {
+          for (const dSchId of data.deleted_school_ids) {
+            this.addDeletedSchoolId(dSchId);
           }
         }
         return {
@@ -315,7 +380,9 @@ export const StorageService = {
 
   // ------------------ SCHOOLS ------------------
   getSchools(): School[] {
-    return getLocalItem<School[]>(STORAGE_KEYS.SCHOOLS, INITIAL_SCHOOLS);
+    const raw = getLocalItem<School[]>(STORAGE_KEYS.SCHOOLS, []);
+    const delSchoolSet = new Set(this.getDeletedSchoolIds());
+    return raw.filter(s => !isDemoSchoolRecord(s) && !delSchoolSet.has(s.id));
   },
 
   getSchoolById(id: string): School | undefined {
@@ -323,12 +390,20 @@ export const StorageService = {
   },
 
   async saveSchool(school: School): Promise<School> {
+    if (school.id) {
+      this.removeDeletedSchoolId(school.id);
+    }
+    const cleanSchool: School = {
+      ...school,
+      is_demo: false,
+    };
+
     const schools = this.getSchools();
-    const index = schools.findIndex(s => s.id === school.id || (school.npsn && s.npsn === school.npsn));
+    const index = schools.findIndex(s => s.id === cleanSchool.id || (cleanSchool.npsn && s.npsn === cleanSchool.npsn));
     if (index >= 0) {
-      schools[index] = { ...schools[index], ...school };
+      schools[index] = { ...schools[index], ...cleanSchool };
     } else {
-      schools.unshift(school);
+      schools.unshift(cleanSchool);
     }
     setLocalItem(STORAGE_KEYS.SCHOOLS, schools);
     
@@ -341,7 +416,7 @@ export const StorageService = {
       const res = await fetch('/api/schools', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(school),
+        body: JSON.stringify(cleanSchool),
       });
       if (res.ok) {
         const saved = await res.json();
@@ -351,10 +426,11 @@ export const StorageService = {
       console.warn('Failed to save school on server, kept in local:', err);
     }
 
-    return school;
+    return cleanSchool;
   },
 
-  deleteSchool(id: string): boolean {
+  async deleteSchool(id: string): Promise<boolean> {
+    this.addDeletedSchoolId(id);
     const schools = this.getSchools().filter(s => s.id !== id);
     setLocalItem(STORAGE_KEYS.SCHOOLS, schools);
     
@@ -362,7 +438,11 @@ export const StorageService = {
       window.dispatchEvent(new CustomEvent('askia_data_updated'));
     }
 
-    fetch(`/api/schools/${id}`, { method: 'DELETE' }).catch(err => console.warn('Failed to delete school on server:', err));
+    try {
+      await fetch(`/api/schools/${id}`, { method: 'DELETE' });
+    } catch (err) {
+      console.warn('Failed to delete school on server:', err);
+    }
     return true;
   },
 
@@ -812,18 +892,23 @@ export const StorageService = {
   // Menghapus data berlabel DEMO secara sentral sehingga sistem bersih untuk seluruh akun
   async purgeDemoData(): Promise<{ removedApps: number; removedSchools: number }> {
     const rawApps = getLocalItem<Application[]>(STORAGE_KEYS.APPLICATIONS, []);
-    const schools = this.getSchools();
+    const rawSchools = getLocalItem<School[]>(STORAGE_KEYS.SCHOOLS, []);
 
     const demoApps = rawApps.filter(a => isDemoApplicationRecord(a));
     for (const dApp of demoApps) {
       this.addDeletedAppId(dApp.id, dApp.registration_code);
     }
 
+    const demoSchools = rawSchools.filter(s => isDemoSchoolRecord(s));
+    for (const dSch of demoSchools) {
+      this.addDeletedSchoolId(dSch.id);
+    }
+
     const realApps = rawApps.filter(a => !isDemoApplicationRecord(a));
-    const realSchools = schools.filter(s => !s.is_demo);
+    const realSchools = rawSchools.filter(s => !isDemoSchoolRecord(s));
 
     const removedApps = rawApps.length - realApps.length;
-    const removedSchools = schools.length - realSchools.length;
+    const removedSchools = rawSchools.length - realSchools.length;
 
     setLocalItem(STORAGE_KEYS.APPLICATIONS, realApps);
     setLocalItem(STORAGE_KEYS.SCHOOLS, realSchools);
@@ -842,10 +927,11 @@ export const StorageService = {
     return { removedApps, removedSchools };
   },
 
-  // Memulihkan data master sekolah/kategori tanpa memunculkan kembali aplikasi demo
+  // Memperbarui referensi kategori/jenis aplikasi tanpa memunculkan kembali aplikasi maupun sekolah demo
   async restoreDemoData(): Promise<void> {
     const existingRealApps = this.getApplications().filter(a => !isDemoApplicationRecord(a));
-    setLocalItem(STORAGE_KEYS.SCHOOLS, INITIAL_SCHOOLS);
+    const existingRealSchools = this.getSchools().filter(s => !isDemoSchoolRecord(s));
+    setLocalItem(STORAGE_KEYS.SCHOOLS, existingRealSchools);
     setLocalItem(STORAGE_KEYS.APPLICATIONS, existingRealApps);
     setLocalItem(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES);
     setLocalItem(STORAGE_KEYS.APP_TYPES, INITIAL_APPLICATION_TYPES);
@@ -858,7 +944,7 @@ export const StorageService = {
       await fetch('/api/demo/restore', { method: 'POST' });
       await this.syncWithServer();
     } catch (err) {
-      console.warn('Failed to restore school data on server:', err);
+      console.warn('Failed to restore reference data on server:', err);
     }
   },
 

@@ -188,7 +188,9 @@ export const ApplicationDetailModal: React.FC<ApplicationDetailModalProps> = ({
               {/* School identity click */}
               <div 
                 onClick={() => school && onSelectSchool && onSelectSchool(school)}
-                className="p-3 bg-slate-50 hover:bg-blue-50/50 rounded-xl border border-slate-200 transition-colors cursor-pointer group"
+                className={`p-3 bg-slate-50 rounded-xl border border-slate-200 transition-colors ${
+                  school ? 'hover:bg-blue-50/50 cursor-pointer group' : ''
+                }`}
               >
                 <div className="flex items-center justify-between">
                   <div>
@@ -200,9 +202,11 @@ export const ApplicationDetailModal: React.FC<ApplicationDetailModalProps> = ({
                       NPSN: {school?.npsn || '-'} · Kec. {application.district}
                     </div>
                   </div>
-                  <span className="text-[11px] text-blue-700 font-semibold group-hover:underline">
-                    Lihat Profil Sekolah →
-                  </span>
+                  {school && (
+                    <span className="text-[11px] text-blue-700 font-semibold group-hover:underline">
+                      Lihat Profil Sekolah →
+                    </span>
+                  )}
                 </div>
               </div>
 

@@ -42,6 +42,11 @@ const LEGACY_DEMO_APP_IDS = new Set<string>([
   'ASKIA-2026-005', 'ASKIA-2026-006', 'ASKIA-2026-007', 'ASKIA-2026-008',
 ]);
 
+// Daftar ID sekolah demo bawaan yang dihapus permanen dari platform
+const LEGACY_DEMO_SCHOOL_IDS = new Set<string>([
+  'school-1', 'school-2', 'school-3', 'school-4', 'school-5', 'school-6',
+]);
+
 function isDemoApplicationRecord(app: Application): boolean {
   if (!app) return false;
   if (app.is_demo === true) return true;
@@ -50,16 +55,23 @@ function isDemoApplicationRecord(app: Application): boolean {
   return false;
 }
 
+function isDemoSchoolRecord(school: School): boolean {
+  if (!school) return false;
+  if (school.is_demo === true) return true;
+  if (school.id && LEGACY_DEMO_SCHOOL_IDS.has(school.id)) return true;
+  return false;
+}
+
 // Inisialisasi Database Server
 function getInitialDb(): DatabaseSchema {
   return {
     applications: [],
-    schools: [...INITIAL_SCHOOLS],
+    schools: [],
     categories: [...INITIAL_CATEGORIES],
     reports: [...INITIAL_REPORTS],
     feedbacks: [...INITIAL_FEEDBACKS],
     deleted_application_ids: Array.from(LEGACY_DEMO_APP_IDS),
-    deleted_school_ids: [],
+    deleted_school_ids: Array.from(LEGACY_DEMO_SCHOOL_IDS),
     updated_at: new Date().toISOString(),
   };
 }
@@ -79,7 +91,7 @@ function loadDatabase(): DatabaseSchema {
     
     // Ensure all arrays exist
     if (!parsed.applications) parsed.applications = [];
-    if (!parsed.schools) parsed.schools = [...INITIAL_SCHOOLS];
+    if (!parsed.schools) parsed.schools = [];
     if (!parsed.categories) parsed.categories = [...INITIAL_CATEGORIES];
     if (!parsed.reports) parsed.reports = [...INITIAL_REPORTS];
     if (!parsed.feedbacks) parsed.feedbacks = [...INITIAL_FEEDBACKS];
@@ -92,6 +104,14 @@ function loadDatabase(): DatabaseSchema {
     for (const demoId of LEGACY_DEMO_APP_IDS) {
       if (!parsed.deleted_application_ids.includes(demoId)) {
         parsed.deleted_application_ids.push(demoId);
+        needsDiskCleanup = true;
+      }
+    }
+
+    // Pastikan seluruh ID sekolah demo masuk ke blacklist permanen
+    for (const demoSchoolId of LEGACY_DEMO_SCHOOL_IDS) {
+      if (!parsed.deleted_school_ids.includes(demoSchoolId)) {
+        parsed.deleted_school_ids.push(demoSchoolId);
         needsDiskCleanup = true;
       }
     }
@@ -109,6 +129,16 @@ function loadDatabase(): DatabaseSchema {
       needsDiskCleanup = true;
     }
 
+    // Filter out seluruh sekolah demo maupun sekolah yang sudah dihapus permanen
+    const delSchoolSet = new Set(parsed.deleted_school_ids);
+    const beforeSchoolCount = parsed.schools.length;
+    parsed.schools = parsed.schools.filter(
+      s => !isDemoSchoolRecord(s) && !delSchoolSet.has(s.id)
+    );
+    if (parsed.schools.length !== beforeSchoolCount) {
+      needsDiskCleanup = true;
+    }
+
     // Otomatis pastikan semua aplikasi terhubung langsung ke Super Admin Pengawas
     parsed.applications = parsed.applications.map(app => ({
       ...app,
@@ -121,7 +151,7 @@ function loadDatabase(): DatabaseSchema {
 
     if (needsDiskCleanup) {
       saveDatabase(parsed);
-      console.log(`[ASKIA SERVER] Aplikasi demo dibersihkan permanen dari database. Sisa aplikasi aktual: ${parsed.applications.length}`);
+      console.log(`[ASKIA SERVER] Data demo dibersihkan permanen dari database. Sisa aktual: ${parsed.applications.length} aplikasi, ${parsed.schools.length} sekolah.`);
     }
 
     return parsed;
@@ -169,10 +199,14 @@ async function startServer() {
 
   // Full Sync Endpoint (Ambil data lengkap terkini untuk Admin & Publik)
   app.get('/api/sync', (_req: Request, res: Response) => {
-    // Pastikan tidak ada aplikasi yang sudah dihapus dikirim ke klien
+    // Pastikan tidak ada aplikasi/sekolah demo maupun yang sudah dihapus dikirim ke klien
     const delSet = new Set(db.deleted_application_ids || []);
+    const delSchoolSet = new Set(db.deleted_school_ids || []);
     db.applications = db.applications.filter(
-      a => !delSet.has(a.id) && (!a.registration_code || !delSet.has(a.registration_code))
+      a => !isDemoApplicationRecord(a) && !delSet.has(a.id) && (!a.registration_code || !delSet.has(a.registration_code))
+    );
+    db.schools = db.schools.filter(
+      s => !isDemoSchoolRecord(s) && !delSchoolSet.has(s.id)
     );
 
     res.json({
@@ -189,10 +223,11 @@ async function startServer() {
 
   // Bulk Merge / Sync from client (menghubungkan data yang mungkin pernah tersimpan di browser klien)
   app.post('/api/sync', (req: Request, res: Response) => {
-    const { applications: clientApps, schools: clientSchools, deleted_application_ids } = req.body;
+    const { applications: clientApps, schools: clientSchools, deleted_application_ids, deleted_school_ids } = req.body;
     let modified = false;
 
     if (!db.deleted_application_ids) db.deleted_application_ids = [];
+    if (!db.deleted_school_ids) db.deleted_school_ids = [];
 
     // Terima daftar terhapus dari klien jika ada
     if (Array.isArray(deleted_application_ids)) {
@@ -203,15 +238,30 @@ async function startServer() {
         }
       }
     }
+    if (Array.isArray(deleted_school_ids)) {
+      for (const dSchId of deleted_school_ids) {
+        if (dSchId && !db.deleted_school_ids.includes(dSchId)) {
+          db.deleted_school_ids.push(dSchId);
+          modified = true;
+        }
+      }
+    }
 
     const delSet = new Set(db.deleted_application_ids);
+    const delSchoolSet = new Set(db.deleted_school_ids);
 
-    // Hapus dari memori jika ada yang masuk daftar terhapus
+    // Hapus dari memori jika ada yang masuk daftar terhapus atau demo
     const prevAppCount = db.applications.length;
     db.applications = db.applications.filter(
-      a => !delSet.has(a.id) && (!a.registration_code || !delSet.has(a.registration_code))
+      a => !isDemoApplicationRecord(a) && !delSet.has(a.id) && (!a.registration_code || !delSet.has(a.registration_code))
     );
     if (db.applications.length !== prevAppCount) modified = true;
+
+    const prevSchoolCount = db.schools.length;
+    db.schools = db.schools.filter(
+      s => !isDemoSchoolRecord(s) && !delSchoolSet.has(s.id)
+    );
+    if (db.schools.length !== prevSchoolCount) modified = true;
 
     if (Array.isArray(clientApps)) {
       for (const cApp of clientApps) {
@@ -245,9 +295,13 @@ async function startServer() {
     if (Array.isArray(clientSchools)) {
       for (const cSch of clientSchools) {
         if (!cSch || !cSch.id) continue;
-        const exists = db.schools.find(s => s.id === cSch.id || (s.npsn && s.npsn === cSch.npsn));
+        // PENTING: Jangan pernah terima atau bangkitkan kembali sekolah demo maupun yang sudah dihapus!
+        if (isDemoSchoolRecord(cSch) || delSchoolSet.has(cSch.id)) {
+          continue;
+        }
+        const exists = db.schools.find(s => s.id === cSch.id || (s.npsn && cSch.npsn && s.npsn === cSch.npsn));
         if (!exists) {
-          db.schools.unshift(cSch);
+          db.schools.unshift({ ...cSch, is_demo: false });
           modified = true;
         }
       }
@@ -290,20 +344,29 @@ async function startServer() {
       total_schools: db.schools.length,
       total_feedbacks: (db.feedbacks || []).length,
       deleted_application_ids: db.deleted_application_ids,
+      deleted_school_ids: db.deleted_school_ids,
     });
   });
 
   // Explicit Save All Changes Endpoint (Simpan Perubahan Permanen oleh Super Admin Pengawas)
   app.post('/api/save-all', (req: Request, res: Response) => {
-    const { applications, schools, categories, reports, feedbacks, deleted_application_ids } = req.body;
+    const { applications, schools, categories, reports, feedbacks, deleted_application_ids, deleted_school_ids } = req.body;
 
     if (!db.deleted_application_ids) db.deleted_application_ids = [];
+    if (!db.deleted_school_ids) db.deleted_school_ids = [];
 
-    // 1. Terima daftar deleted_application_ids eksplisit
+    // 1. Terima daftar deleted_application_ids dan deleted_school_ids eksplisit
     if (Array.isArray(deleted_application_ids)) {
       for (const dId of deleted_application_ids) {
         if (dId && !db.deleted_application_ids.includes(dId)) {
           db.deleted_application_ids.push(dId);
+        }
+      }
+    }
+    if (Array.isArray(deleted_school_ids)) {
+      for (const dSchId of deleted_school_ids) {
+        if (dSchId && !db.deleted_school_ids.includes(dSchId)) {
+          db.deleted_school_ids.push(dSchId);
         }
       }
     }
@@ -350,7 +413,20 @@ async function startServer() {
     }
 
     if (Array.isArray(schools)) {
-      db.schools = schools;
+      // Deteksi sekolah yang ada di server tapi sengaja dihilangkan / dihapus oleh Super Admin
+      const incomingSchoolIds = new Set<string>(schools.map((s: School) => s.id).filter(Boolean));
+      for (const existingSchool of db.schools) {
+        if (existingSchool.id && !incomingSchoolIds.has(existingSchool.id)) {
+          if (!db.deleted_school_ids.includes(existingSchool.id)) {
+            db.deleted_school_ids.push(existingSchool.id);
+          }
+        }
+      }
+
+      const delSchoolSet = new Set(db.deleted_school_ids);
+      db.schools = schools
+        .filter((s: School) => !isDemoSchoolRecord(s) && !delSchoolSet.has(s.id))
+        .map((s: School) => ({ ...s, is_demo: false }));
     }
 
     if (Array.isArray(categories)) {
@@ -373,6 +449,8 @@ async function startServer() {
       message: 'Seluruh perubahan berhasil disimpan permanen di database server.',
       total_apps: db.applications.length,
       total_schools: db.schools.length,
+      deleted_application_ids: db.deleted_application_ids,
+      deleted_school_ids: db.deleted_school_ids,
       updated_at: db.updated_at,
     });
   });
@@ -516,13 +594,18 @@ async function startServer() {
   // ------------------ SCHOOLS API ------------------
 
   app.get('/api/schools', (_req: Request, res: Response) => {
-    res.json(db.schools);
+    const delSchoolSet = new Set(db.deleted_school_ids || []);
+    const validSchools = db.schools.filter(s => !isDemoSchoolRecord(s) && !delSchoolSet.has(s.id));
+    res.json(validSchools);
   });
 
   app.post('/api/schools', (req: Request, res: Response) => {
     const schoolData: School = req.body;
     if (!schoolData.school_name) {
       return res.status(400).json({ error: 'Nama sekolah wajib diisi' });
+    }
+    if (isDemoSchoolRecord(schoolData)) {
+      return res.status(400).json({ error: 'Data sekolah demo tidak diperbolehkan' });
     }
 
     if (!schoolData.id) {
@@ -531,10 +614,15 @@ async function startServer() {
     if (!schoolData.created_at) {
       schoolData.created_at = new Date().toISOString();
     }
+    schoolData.is_demo = false;
+
+    if (Array.isArray(db.deleted_school_ids)) {
+      db.deleted_school_ids = db.deleted_school_ids.filter(id => id !== schoolData.id);
+    }
 
     const index = db.schools.findIndex(s => s.id === schoolData.id || (schoolData.npsn && s.npsn === schoolData.npsn));
     if (index >= 0) {
-      db.schools[index] = { ...db.schools[index], ...schoolData };
+      db.schools[index] = { ...db.schools[index], ...schoolData, is_demo: false };
     } else {
       db.schools.unshift(schoolData);
     }
@@ -544,9 +632,14 @@ async function startServer() {
   });
 
   app.delete('/api/schools/:id', (req: Request, res: Response) => {
-    db.schools = db.schools.filter(s => s.id !== req.params.id);
+    const schoolId = req.params.id;
+    if (!db.deleted_school_ids) db.deleted_school_ids = [];
+    if (schoolId && !db.deleted_school_ids.includes(schoolId)) {
+      db.deleted_school_ids.push(schoolId);
+    }
+    db.schools = db.schools.filter(s => s.id !== schoolId);
     saveDatabase(db);
-    res.json({ success: true });
+    res.json({ success: true, deleted_school_ids: db.deleted_school_ids });
   });
 
   // ------------------ CATEGORIES API ------------------
@@ -625,6 +718,8 @@ async function startServer() {
     const prevSchools = db.schools.length;
 
     if (!db.deleted_application_ids) db.deleted_application_ids = [];
+    if (!db.deleted_school_ids) db.deleted_school_ids = [];
+
     for (const app of db.applications) {
       if (isDemoApplicationRecord(app)) {
         if (app.id && !db.deleted_application_ids.includes(app.id)) {
@@ -636,8 +731,16 @@ async function startServer() {
       }
     }
 
+    for (const sch of db.schools) {
+      if (isDemoSchoolRecord(sch)) {
+        if (sch.id && !db.deleted_school_ids.includes(sch.id)) {
+          db.deleted_school_ids.push(sch.id);
+        }
+      }
+    }
+
     db.applications = db.applications.filter(a => !isDemoApplicationRecord(a));
-    db.schools = db.schools.filter(s => !s.is_demo);
+    db.schools = db.schools.filter(s => !isDemoSchoolRecord(s));
 
     saveDatabase(db);
     res.json({
@@ -648,12 +751,13 @@ async function startServer() {
   });
 
   app.post('/api/demo/restore', (_req: Request, res: Response) => {
-    // Pertahankan seluruh aplikasi aktual dan pastikan aplikasi demo tetap tidak dimunculkan
+    // Pertahankan seluruh aplikasi & sekolah aktual dan pastikan data demo tetap tidak dimunculkan
     const existingRealApps = db.applications.filter(a => !isDemoApplicationRecord(a));
-    db.schools = [...INITIAL_SCHOOLS, ...db.schools.filter(s => !s.is_demo)];
+    const existingRealSchools = db.schools.filter(s => !isDemoSchoolRecord(s));
+    db.schools = existingRealSchools;
     db.applications = existingRealApps;
     saveDatabase(db);
-    res.json({ success: true, message: 'Data referensi sekolah diperbarui (aplikasi demo tetap dinonaktifkan)' });
+    res.json({ success: true, message: 'Data referensi diperbarui (aplikasi & sekolah demo tetap dinonaktifkan)' });
   });
 
   // ------------------ VITE / STATIC SERVING ------------------

@@ -242,6 +242,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  const handleDeleteSchool = async (schoolId: string, schoolName: string) => {
+    if (window.confirm(`Yakin ingin menghapus sekolah "${schoolName}" dari sistem? Penghapusan bersifat permanen.`)) {
+      setIsSavingChanges(true);
+      try {
+        await StorageService.deleteSchool(schoolId);
+        reloadData();
+        await StorageService.saveAllChanges();
+        const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
+        setLastSavedTime(timeStr);
+        setHasUnsavedChanges(false);
+        showNotification(`Sekolah "${schoolName}" berhasil dihapus secara permanen (${timeStr}). Data tidak akan muncul kembali.`);
+      } finally {
+        setIsSavingChanges(false);
+      }
+    }
+  };
+
   // Category Actions dengan penyimpanan permanen
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -286,26 +303,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Section K: Demo Data Purge
   const handlePurgeDemo = async () => {
-    if (window.confirm('PERINGATAN: Anda akan menghapus seluruh data demonstrasi [DEMO]. Data aplikasi dan sekolah aktual yang diinput manual tidak akan terhapus. Lanjutkan?')) {
+    if (window.confirm('PERINGATAN: Anda akan menghapus seluruh data demonstrasi [DEMO] (aplikasi & sekolah demo). Data aktual yang diinput manual tidak akan terhapus. Lanjutkan?')) {
       const result = await StorageService.purgeDemoData();
       reloadData();
       await StorageService.saveAllChanges();
       const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
       setLastSavedTime(timeStr);
       setHasUnsavedChanges(false);
-      showNotification(`Berhasil menghapus ${result.removedApps} aplikasi demo dan disimpan permanen (${timeStr}).`);
+      showNotification(`Berhasil membersihkan ${result.removedApps} aplikasi demo dan ${result.removedSchools} sekolah demo secara permanen (${timeStr}).`);
     }
   };
 
   const handleRestoreDemo = async () => {
-    if (window.confirm('Perbarui daftar sekolah referensi? Aplikasi demo tetap dinonaktifkan dan tidak akan dimunculkan.')) {
+    if (window.confirm('Perbarui daftar kategori & jenis aplikasi referensi? Aplikasi dan sekolah demo tetap dinonaktifkan dan tidak akan dimunculkan.')) {
       await StorageService.restoreDemoData();
       reloadData();
       await StorageService.saveAllChanges();
       const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
       setLastSavedTime(timeStr);
       setHasUnsavedChanges(false);
-      showNotification(`Referensi sekolah diperbarui (${timeStr}). Aplikasi demo tetap tidak dimunculkan.`);
+      showNotification(`Data referensi diperbarui (${timeStr}). Aplikasi dan sekolah demo tetap tidak dimunculkan.`);
     }
   };
 
@@ -919,30 +936,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <th className="py-3 px-4">Kepala Sekolah</th>
                   <th className="py-3 px-4">Kontak Email</th>
                   <th className="py-3 px-4 text-center">Status</th>
+                  <th className="py-3 px-4 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {schools.map((s, idx) => (
-                  <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-3 px-4 text-slate-400 font-mono">{idx + 1}</td>
-                    <td className="py-3 px-4 font-bold text-slate-900">{s.school_name}</td>
-                    <td className="py-3 px-4 font-mono text-slate-600">{s.npsn}</td>
-                    <td className="py-3 px-4 text-slate-600">{s.district}</td>
-                    <td className="py-3 px-4 text-slate-800">{s.principal_name}</td>
-                    <td className="py-3 px-4 text-slate-500">{s.contact_email}</td>
-                    <td className="py-3 px-4 text-center">
-                      {s.is_demo ? (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded border border-amber-300">
-                          DEMO
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-300">
-                          AKTUAL
-                        </span>
-                      )}
+                {schools.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-slate-400">
+                      Belum ada data sekolah dampingan aktual yang terdaftar di sistem.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  schools.map((s, idx) => (
+                    <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-3 px-4 text-slate-400 font-mono">{idx + 1}</td>
+                      <td className="py-3 px-4 font-bold text-slate-900">{s.school_name}</td>
+                      <td className="py-3 px-4 font-mono text-slate-600">{s.npsn}</td>
+                      <td className="py-3 px-4 text-slate-600">{s.district}</td>
+                      <td className="py-3 px-4 text-slate-800">{s.principal_name}</td>
+                      <td className="py-3 px-4 text-slate-500">{s.contact_email}</td>
+                      <td className="py-3 px-4 text-center">
+                        {s.is_demo ? (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded border border-amber-300">
+                            DEMO
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-300">
+                            AKTUAL
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => handleDeleteSchool(s.id, s.school_name)}
+                          title="Hapus sekolah secara permanen"
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1358,11 +1393,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-900 space-y-2">
             <div className="font-bold flex items-center gap-1.5">
               <CheckCircle2 className="w-4 h-4 text-emerald-700" />
-              <span>Status Aplikasi Demo: Dihapus Permanen dari Sistem</span>
+              <span>Status Aplikasi &amp; Sekolah Demo: Dihapus Permanen dari Sistem</span>
             </div>
             <p className="leading-relaxed">
-              Seluruh aplikasi percontohan <strong>[DEMO]</strong> telah dihapus secara permanen dari sistem dan tidak akan dimunculkan kembali baik pada Panel Admin maupun pada dashboard pengguna baru/pengunjung.
-              Hanya inovasi aplikasi aktual yang diunggah oleh sekolah yang tampil di platform.
+              Seluruh aplikasi dan sekolah percontohan <strong>[DEMO]</strong> telah dihapus secara permanen dari sistem dan tidak akan dimunculkan kembali baik pada akun utama Panel Admin maupun pada dashboard pengguna baru/pengunjung.
+              Hanya data sekolah dan inovasi aplikasi aktual yang diunggah sekolah yang tampil di platform.
             </p>
           </div>
 
@@ -1380,7 +1415,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               className="w-full flex items-center justify-center gap-2 py-3 px-4 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
             >
               <RefreshCw className="w-4 h-4 text-slate-500" />
-              <span>Perbarui Data Sekolah Referensi (Tanpa Aplikasi Demo)</span>
+              <span>Perbarui Data Kategori Referensi (Tanpa Data Demo)</span>
             </button>
 
             <div className="pt-4 border-t border-slate-100">
